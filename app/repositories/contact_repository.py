@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models import Contact
+from app.infrastructure import Contact
 from app.repositories.base import BaseRepository
 from app.schemas.contact import ContactCreate, ContactResponse, ContactUpdate
 

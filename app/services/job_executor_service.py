@@ -1,5 +1,4 @@
-from app.async_task_executor import AsyncTaskExecutor
-from app.database import Session
+from app.infrastructure import AsyncTaskExecutor, Session
 
 
 class JobExecutorService:

@@ -4,7 +4,7 @@ from app.dependencies.repositories import (
     get_contact_repository,
     get_push_job_repository,
 )
-from app.hubspot_client import HubSpotClient
+from app.infrastructure import HubSpotClient
 from app.repositories import ContactRepository, PushJobRepository
 from app.services import PushService
 from app.services.contact_matching_service import ContactMatchingService

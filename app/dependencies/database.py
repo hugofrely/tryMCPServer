@@ -2,7 +2,7 @@ from collections.abc import Generator
 
 from sqlalchemy.orm import Session
 
-from app.database import Session as SessionFactory
+from app.infrastructure import Session as SessionFactory
 
 
 def get_session() -> Generator[Session, None, None]:

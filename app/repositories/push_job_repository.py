@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.models import PushJob
+from app.infrastructure import PushJob
 from app.repositories.base import BaseRepository
 from app.schemas.push_job import PushJobCreate, PushJobResponse, PushJobUpdate
 

@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 
-from app.database import engine
-from app.models import Base
+from app.infrastructure import Base, engine
 from app.routers import health_router, push_router
 
 # Create tables

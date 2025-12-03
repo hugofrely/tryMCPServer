@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.hubspot_client import HubSpotClient
+from app.infrastructure import HubSpotClient
 from app.repositories import ContactRepository, PushJobRepository
 from app.schemas import ContactCreate, ContactResponse, PushJobResponse
 from app.services.contact_matching_service import ContactMatchingService
