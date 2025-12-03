@@ -1,0 +1,11 @@
+[project]
+name = "technical-test"
+version = "0.1.0"
+description = "Scalability technical test"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.121.3",
+    "pydantic>=2.12.4",
+    "sqlalchemy>=2.0.44",
+]
