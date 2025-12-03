@@ -62,6 +62,8 @@ class PushService:
         ]
         self._contact_repo.bulk_create(contact_schemas)
 
+        self._push_job_repo.commit()
+
         return push_job
 
     def process_job(self, job_id: int) -> SyncResult:
