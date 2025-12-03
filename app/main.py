@@ -1,10 +1,6 @@
 from fastapi import FastAPI
 
-from app.infrastructure import Base, engine
 from app.routers import health_router, push_router
-
-# Create tables
-Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(

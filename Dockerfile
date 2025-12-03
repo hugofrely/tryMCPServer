@@ -11,11 +11,17 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies
 RUN uv sync --frozen --no-dev
 
-# Copy application code
+# Copy application code and alembic
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+
+# Copy entrypoint script
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uv", "run", "fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations and start the application
+ENTRYPOINT ["./entrypoint.sh"]

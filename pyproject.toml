@@ -7,7 +7,10 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.121.3",
     "pydantic>=2.12.4",
+    "pydantic-settings>=2.0.0",
     "sqlalchemy>=2.0.44",
+    "psycopg2-binary>=2.9.0",
+    "alembic>=1.13.0",
 ]
 
 [project.optional-dependencies]
