@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from app.dependencies import get_job_executor, get_push_service
+from app.domain import JobNotFoundError
 from app.schemas import (
     ErrorResponse,
     JobStatus,
@@ -63,6 +64,7 @@ async def push_profiles(
     description="Get the current status of a push job.",
     responses={
         200: {"description": "Job status retrieved successfully"},
+        400: {"description": "Invalid job_id format", "model": ErrorResponse},
         404: {"description": "Job not found", "model": ErrorResponse},
     },
 )
@@ -85,12 +87,12 @@ async def get_push_status(
             detail="Invalid job_id format. Must be a valid integer.",
         )
 
-    job = service.get_job_status(job_id_int)
-
-    if not job:
+    try:
+        job = service.get_job_status(job_id_int)
+    except JobNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job with id '{job_id}' not found",
+            detail=e.message,
         )
 
     return PushJobStatusResponse(

@@ -1,6 +1,7 @@
 import pytest
 
-from app.services.contact_matching_service import ContactMatchingService, MatchResult
+from app.domain import HubSpotContact, MatchResult
+from app.services.contact_matching_service import ContactMatchingService
 
 
 class TestContactMatchingService:
@@ -62,7 +63,7 @@ class TestContactMatchingService:
         assert len(result.matched) == 1, f"Failed to match by {description}"
         assert len(result.unmatched) == 0
         assert result.matched[0][0].id == local.id
-        assert result.matched[0][1]["id"] == hubspot["id"]
+        assert result.matched[0][1].id == hubspot.id
 
     # =========================================================================
     # No match scenarios (parametrized)
@@ -133,7 +134,7 @@ class TestContactMatchingService:
         result = service.match_contacts([local], [hubspot_linkedin, hubspot_email])
 
         assert len(result.matched) == 1
-        assert result.matched[0][1]["id"] == "hs_linkedin"
+        assert result.matched[0][1].id == "hs_linkedin"
 
     def test_email_takes_priority_over_name(
         self, service: ContactMatchingService, make_contact, make_hubspot_contact
@@ -152,21 +153,21 @@ class TestContactMatchingService:
         result = service.match_contacts([local], [hubspot_email, hubspot_name])
 
         assert len(result.matched) == 1
-        assert result.matched[0][1]["id"] == "hs_email"
+        assert result.matched[0][1].id == "hs_email"
 
     # =========================================================================
     # Edge cases (parametrized)
     # =========================================================================
 
     @pytest.mark.parametrize(
-        "local_contacts,hubspot_contacts,expected_matched,expected_unmatched",
+        "local_contacts,hubspot_count,expected_matched,expected_unmatched",
         [
             # Empty local contacts
-            ([], [{"id": "hs_1", "properties": {}}], 0, 0),
+            ([], 1, 0, 0),
             # Empty hubspot contacts
-            ([{"email": "test@example.com"}], [], 0, 1),
+            ([{"email": "test@example.com"}], 0, 0, 1),
             # Both empty
-            ([], [], 0, 0),
+            ([], 0, 0, 0),
         ],
         ids=["empty_local", "empty_hubspot", "both_empty"],
     )
@@ -174,15 +175,17 @@ class TestContactMatchingService:
         self,
         service: ContactMatchingService,
         make_contact,
+        make_hubspot_contact,
         local_contacts: list,
-        hubspot_contacts: list,
+        hubspot_count: int,
         expected_matched: int,
         expected_unmatched: int,
     ):
         """Should handle empty contact lists."""
         locals_list = [make_contact(**c) for c in local_contacts]
+        hubspot_list = [make_hubspot_contact() for _ in range(hubspot_count)]
 
-        result = service.match_contacts(locals_list, hubspot_contacts)
+        result = service.match_contacts(locals_list, hubspot_list)
 
         assert len(result.matched) == expected_matched
         assert len(result.unmatched) == expected_unmatched

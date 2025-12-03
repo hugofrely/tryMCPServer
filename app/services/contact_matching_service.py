@@ -1,14 +1,5 @@
-from dataclasses import dataclass
-
+from app.domain import HubSpotContact, MatchResult
 from app.schemas import ContactResponse
-
-
-@dataclass
-class MatchResult:
-    """Result of contact matching operation."""
-
-    matched: list[tuple[ContactResponse, dict]]
-    unmatched: list[ContactResponse]
 
 
 class ContactMatchingService:
@@ -24,14 +15,14 @@ class ContactMatchingService:
     def match_contacts(
         self,
         local_contacts: list[ContactResponse],
-        hubspot_contacts: list[dict],
+        hubspot_contacts: list[HubSpotContact],
     ) -> MatchResult:
         """
         Match local contacts with HubSpot contacts.
 
         Returns a MatchResult containing matched pairs and unmatched contacts.
         """
-        matched: list[tuple[ContactResponse, dict]] = []
+        matched: list[tuple[ContactResponse, HubSpotContact]] = []
         unmatched: list[ContactResponse] = []
 
         for local_contact in local_contacts:
@@ -47,8 +38,8 @@ class ContactMatchingService:
     def _find_match(
         self,
         local_contact: ContactResponse,
-        hubspot_contacts: list[dict],
-    ) -> dict | None:
+        hubspot_contacts: list[HubSpotContact],
+    ) -> HubSpotContact | None:
         """Find a matching HubSpot contact for a local contact."""
         for hubspot_contact in hubspot_contacts:
             if self._matches_by_linkedin_id(local_contact, hubspot_contact):
@@ -65,38 +56,36 @@ class ContactMatchingService:
     def _matches_by_linkedin_id(
         self,
         local_contact: ContactResponse,
-        hubspot_contact: dict,
+        hubspot_contact: HubSpotContact,
     ) -> bool:
         """Check if contacts match by LinkedIn ID."""
         if not local_contact.linkedin_id:
             return False
 
-        hubspot_linkedin_id = hubspot_contact["properties"].get("linkedin_id")
-        return hubspot_linkedin_id == local_contact.linkedin_id
+        return hubspot_contact.properties.linkedin_id == local_contact.linkedin_id
 
     def _matches_by_email(
         self,
         local_contact: ContactResponse,
-        hubspot_contact: dict,
+        hubspot_contact: HubSpotContact,
     ) -> bool:
         """Check if contacts match by email."""
         if not local_contact.email:
             return False
 
-        hubspot_email = hubspot_contact["properties"].get("email")
-        return hubspot_email == local_contact.email
+        return hubspot_contact.properties.email == local_contact.email
 
     def _matches_by_name(
         self,
         local_contact: ContactResponse,
-        hubspot_contact: dict,
+        hubspot_contact: HubSpotContact,
     ) -> bool:
         """Check if contacts match by first name + last name."""
         if not local_contact.first_name or not local_contact.last_name:
             return False
 
-        hubspot_first = hubspot_contact["properties"].get("firstname", "").lower()
-        hubspot_last = hubspot_contact["properties"].get("lastname", "").lower()
+        hubspot_first = (hubspot_contact.properties.firstname or "").lower()
+        hubspot_last = (hubspot_contact.properties.lastname or "").lower()
 
         return (
             hubspot_first == local_contact.first_name.lower()

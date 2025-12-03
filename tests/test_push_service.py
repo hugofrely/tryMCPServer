@@ -1,9 +1,8 @@
 import pytest
 
+from app.domain import JobNotFoundError, MatchResult, SyncResult
 from app.schemas import PushJobResponse
 from app.services import PushService
-from app.services.contact_matching_service import MatchResult
-from app.services.push_service import SyncResult
 
 
 class TestPushService:
@@ -12,16 +11,14 @@ class TestPushService:
     @pytest.fixture
     def service(
         self,
-        mock_push_job_repo,
-        mock_contact_repo,
-        mock_hubspot_client,
+        mock_uow,
+        mock_crm_client,
         mock_matching_service,
     ) -> PushService:
         """Create PushService with mocked dependencies."""
         return PushService(
-            push_job_repo=mock_push_job_repo,
-            contact_repo=mock_contact_repo,
-            hubspot_client=mock_hubspot_client,
+            uow=mock_uow,
+            crm_client=mock_crm_client,
             matching_service=mock_matching_service,
         )
 
@@ -35,15 +32,13 @@ class TestPushService:
         @pytest.fixture
         def service(
             self,
-            mock_push_job_repo,
-            mock_contact_repo,
-            mock_hubspot_client,
+            mock_uow,
+            mock_crm_client,
             mock_matching_service,
         ) -> PushService:
             return PushService(
-                push_job_repo=mock_push_job_repo,
-                contact_repo=mock_contact_repo,
-                hubspot_client=mock_hubspot_client,
+                uow=mock_uow,
+                crm_client=mock_crm_client,
                 matching_service=mock_matching_service,
             )
 
@@ -69,22 +64,22 @@ class TestPushService:
         def test_creates_contacts_for_profiles(
             self,
             service: PushService,
-            mock_contact_repo,
+            mock_uow,
             profiles: list,
             expected_count: int,
         ):
             """Should create correct number of contacts."""
             service.create_push_job(profiles)
 
-            mock_contact_repo.bulk_create.assert_called_once()
-            call_args = mock_contact_repo.bulk_create.call_args[0][0]
+            mock_uow.contacts.bulk_create.assert_called_once()
+            call_args = mock_uow.contacts.bulk_create.call_args[0][0]
             assert len(call_args) == expected_count
 
-        def test_creates_pending_job(self, service: PushService, mock_push_job_repo):
+        def test_creates_pending_job(self, service: PushService, mock_uow):
             """Should create a pending job."""
             result = service.create_push_job([{"first_name": "John"}])
 
-            mock_push_job_repo.create_pending_job.assert_called_once()
+            mock_uow.push_jobs.create_pending_job.assert_called_once()
             assert result.status == "pending"
 
         def test_returns_push_job_response(self, service: PushService):
@@ -104,49 +99,51 @@ class TestPushService:
         @pytest.fixture
         def service(
             self,
-            mock_push_job_repo,
-            mock_contact_repo,
-            mock_hubspot_client,
+            mock_uow,
+            mock_crm_client,
             mock_matching_service,
         ) -> PushService:
             return PushService(
-                push_job_repo=mock_push_job_repo,
-                contact_repo=mock_contact_repo,
-                hubspot_client=mock_hubspot_client,
+                uow=mock_uow,
+                crm_client=mock_crm_client,
                 matching_service=mock_matching_service,
             )
 
-        def test_raises_if_job_not_found(
-            self, service: PushService, mock_push_job_repo
+        def test_raises_job_not_found_error(
+            self, service: PushService, mock_uow
         ):
-            """Should raise ValueError if job not found."""
-            mock_push_job_repo.get_by_id.return_value = None
+            """Should raise JobNotFoundError if job not found."""
+            mock_uow.push_jobs.get_by_id.return_value = None
 
-            with pytest.raises(ValueError, match="Job 999 not found"):
+            with pytest.raises(JobNotFoundError) as exc_info:
                 service.process_job(999)
 
+            assert exc_info.value.job_id == 999
+            assert "999" in exc_info.value.message
+
         def test_fetches_hubspot_contacts(
-            self, service: PushService, mock_hubspot_client
+            self, service: PushService, mock_crm_client
         ):
             """Should fetch all HubSpot contacts."""
             service.process_job(1)
 
-            mock_hubspot_client.get_all_contacts.assert_called_once()
+            mock_crm_client.get_all_contacts.assert_called_once()
 
         def test_uses_matching_service(
             self,
             service: PushService,
             mock_matching_service,
-            mock_contact_repo,
-            mock_hubspot_client,
+            mock_uow,
+            mock_crm_client,
             make_contact,
+            make_hubspot_contact,
         ):
             """Should use matching service to match contacts."""
             local_contacts = [make_contact(email="john@example.com")]
-            hubspot_contacts = [{"id": "hs_1", "properties": {}}]
+            hubspot_contacts = [make_hubspot_contact()]
 
-            mock_contact_repo.get_by_job_id.return_value = local_contacts
-            mock_hubspot_client.get_all_contacts.return_value = hubspot_contacts
+            mock_uow.contacts.get_by_job_id.return_value = local_contacts
+            mock_crm_client.get_all_contacts.return_value = hubspot_contacts
 
             service.process_job(1)
 
@@ -169,7 +166,7 @@ class TestPushService:
             self,
             service: PushService,
             mock_matching_service,
-            mock_hubspot_client,
+            mock_crm_client,
             make_contact,
             make_hubspot_contact,
             matched_count: int,
@@ -198,7 +195,7 @@ class TestPushService:
             self,
             service: PushService,
             mock_matching_service,
-            mock_hubspot_client,
+            mock_crm_client,
             make_contact,
         ):
             """Should create new contacts in HubSpot for unmatched."""
@@ -209,13 +206,13 @@ class TestPushService:
 
             service.process_job(1)
 
-            mock_hubspot_client.create_contact.assert_called_once()
+            mock_crm_client.create_contact.assert_called_once()
 
         def test_updates_contact_in_hubspot_for_matched(
             self,
             service: PushService,
             mock_matching_service,
-            mock_hubspot_client,
+            mock_crm_client,
             make_contact,
             make_hubspot_contact,
         ):
@@ -228,31 +225,29 @@ class TestPushService:
 
             service.process_job(1)
 
-            mock_hubspot_client.update_contact.assert_called_once()
+            mock_crm_client.update_contact.assert_called_once()
 
         def test_marks_job_completed_on_success(
-            self, service: PushService, mock_push_job_repo
+            self, service: PushService, mock_uow
         ):
             """Should mark job as completed on success."""
             service.process_job(1)
 
-            mock_push_job_repo.mark_as_completed.assert_called_once_with(
+            mock_uow.push_jobs.mark_as_completed.assert_called_once_with(
                 job_id=1, created_count=0, updated_count=0
             )
-            mock_push_job_repo.commit.assert_called()
 
         def test_marks_job_failed_on_error(
-            self, service: PushService, mock_push_job_repo, mock_hubspot_client
+            self, service: PushService, mock_uow, mock_crm_client
         ):
             """Should mark job as failed on error."""
-            mock_hubspot_client.get_all_contacts.side_effect = Exception("API Error")
+            mock_crm_client.get_all_contacts.side_effect = Exception("API Error")
 
             with pytest.raises(Exception, match="API Error"):
                 service.process_job(1)
 
-            mock_push_job_repo.rollback.assert_called_once()
-            mock_push_job_repo.mark_as_failed.assert_called_once()
-            assert "API Error" in mock_push_job_repo.mark_as_failed.call_args[0][1]
+            mock_uow.push_jobs.mark_as_failed.assert_called_once()
+            assert "API Error" in mock_uow.push_jobs.mark_as_failed.call_args[0][1]
 
         def test_returns_sync_result(self, service: PushService):
             """Should return SyncResult dataclass."""
@@ -266,21 +261,22 @@ class TestPushService:
             self,
             service: PushService,
             mock_matching_service,
-            mock_contact_repo,
-            mock_hubspot_client,
+            mock_uow,
+            mock_crm_client,
             make_contact,
+            make_hubspot_contact,
         ):
             """Should update local contact with HubSpot ID after create."""
             unmatched = make_contact(id=42, email="test@example.com")
             mock_matching_service.match_contacts.return_value = MatchResult(
                 matched=[], unmatched=[unmatched]
             )
-            mock_hubspot_client.create_contact.return_value = {"id": "hubspot_999"}
+            mock_crm_client.create_contact.return_value = make_hubspot_contact(id="hubspot_999")
 
             service.process_job(1)
 
-            mock_contact_repo.update_with_hubspot_data.assert_called_once()
-            call_kwargs = mock_contact_repo.update_with_hubspot_data.call_args[1]
+            mock_uow.contacts.update_with_hubspot_data.assert_called_once()
+            call_kwargs = mock_uow.contacts.update_with_hubspot_data.call_args[1]
             assert call_kwargs["contact_id"] == 42
             assert call_kwargs["hubspot_id"] == "hubspot_999"
 
@@ -294,39 +290,39 @@ class TestPushService:
         @pytest.fixture
         def service(
             self,
-            mock_push_job_repo,
-            mock_contact_repo,
-            mock_hubspot_client,
+            mock_uow,
+            mock_crm_client,
             mock_matching_service,
         ) -> PushService:
             return PushService(
-                push_job_repo=mock_push_job_repo,
-                contact_repo=mock_contact_repo,
-                hubspot_client=mock_hubspot_client,
+                uow=mock_uow,
+                crm_client=mock_crm_client,
                 matching_service=mock_matching_service,
             )
 
-        @pytest.mark.parametrize(
-            "job_exists,expected_none",
-            [
-                (True, False),
-                (False, True),
-            ],
-            ids=["job_exists", "job_not_found"],
-        )
-        def test_returns_job_or_none(
+        def test_returns_job_if_exists(
             self,
             service: PushService,
-            mock_push_job_repo,
+            mock_uow,
             make_push_job,
-            job_exists: bool,
-            expected_none: bool,
         ):
-            """Should return job if exists, None otherwise."""
-            mock_push_job_repo.get_by_id.return_value = (
-                make_push_job() if job_exists else None
-            )
+            """Should return job if it exists."""
+            expected_job = make_push_job()
+            mock_uow.push_jobs.get_by_id.return_value = expected_job
 
             result = service.get_job_status(1)
 
-            assert (result is None) == expected_none
+            assert result == expected_job
+
+        def test_raises_job_not_found_error(
+            self,
+            service: PushService,
+            mock_uow,
+        ):
+            """Should raise JobNotFoundError if job not found."""
+            mock_uow.push_jobs.get_by_id.return_value = None
+
+            with pytest.raises(JobNotFoundError) as exc_info:
+                service.get_job_status(999)
+
+            assert exc_info.value.job_id == 999

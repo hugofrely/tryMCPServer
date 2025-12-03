@@ -1,17 +1,12 @@
-from dataclasses import dataclass
-
-from app.infrastructure import HubSpotClient
-from app.repositories import ContactRepository, PushJobRepository
+from app.domain import (
+    CrmClient,
+    HubSpotContact,
+    JobNotFoundError,
+    SyncResult,
+    UnitOfWork,
+)
 from app.schemas import ContactCreate, ContactResponse, PushJobResponse
 from app.services.contact_matching_service import ContactMatchingService
-
-
-@dataclass
-class SyncResult:
-    """Result of a HubSpot sync operation."""
-
-    created_count: int
-    updated_count: int
 
 
 class PushService:
@@ -22,18 +17,22 @@ class PushService:
     - Creating push jobs and contacts
     - Syncing contacts with HubSpot (matching, creating, updating)
     - Updating job status
+
+    Dependencies are injected through the constructor using interfaces (Protocol),
+    following the Dependency Inversion Principle.
+
+    Transaction management is handled by the UnitOfWork, keeping database-specific
+    concerns out of the service layer.
     """
 
     def __init__(
         self,
-        push_job_repo: PushJobRepository,
-        contact_repo: ContactRepository,
-        hubspot_client: HubSpotClient,
+        uow: UnitOfWork,
+        crm_client: CrmClient,
         matching_service: ContactMatchingService,
     ):
-        self._push_job_repo = push_job_repo
-        self._contact_repo = contact_repo
-        self._hubspot = hubspot_client
+        self._uow = uow
+        self._crm_client = crm_client
         self._matching_service = matching_service
 
     def create_push_job(self, profiles: list[dict]) -> PushJobResponse:
@@ -46,25 +45,24 @@ class PushService:
         Returns:
             The created PushJob.
         """
-        push_job = self._push_job_repo.create_pending_job()
+        with self._uow:
+            push_job = self._uow.push_jobs.create_pending_job()
 
-        contact_schemas = [
-            ContactCreate(
-                job_id=push_job.id,
-                first_name=profile.get("first_name"),
-                last_name=profile.get("last_name"),
-                email=profile.get("email"),
-                linkedin_id=profile.get("linkedin_id"),
-                phone=profile.get("phone"),
-                company=profile.get("company"),
-            )
-            for profile in profiles
-        ]
-        self._contact_repo.bulk_create(contact_schemas)
+            contact_schemas = [
+                ContactCreate(
+                    job_id=push_job.id,
+                    first_name=profile.get("first_name"),
+                    last_name=profile.get("last_name"),
+                    email=profile.get("email"),
+                    linkedin_id=profile.get("linkedin_id"),
+                    phone=profile.get("phone"),
+                    company=profile.get("company"),
+                )
+                for profile in profiles
+            ]
+            self._uow.contacts.bulk_create(contact_schemas)
 
-        self._push_job_repo.commit()
-
-        return push_job
+            return push_job
 
     def process_job(self, job_id: int) -> SyncResult:
         """
@@ -77,34 +75,58 @@ class PushService:
             SyncResult with counts of created and updated contacts.
 
         Raises:
-            ValueError: If the job is not found.
+            JobNotFoundError: If the job is not found.
         """
-        push_job = self._push_job_repo.get_by_id(job_id)
-        if not push_job:
-            raise ValueError(f"Job {job_id} not found")
+        with self._uow:
+            push_job = self._uow.push_jobs.get_by_id(job_id)
+            if not push_job:
+                raise JobNotFoundError(job_id)
 
-        try:
-            result = self._sync_contacts(job_id)
+            try:
+                result = self._sync_contacts(job_id)
 
-            self._push_job_repo.mark_as_completed(
-                job_id=job_id,
-                created_count=result.created_count,
-                updated_count=result.updated_count,
-            )
-            self._push_job_repo.commit()
+                self._uow.push_jobs.mark_as_completed(
+                    job_id=job_id,
+                    created_count=result.created_count,
+                    updated_count=result.updated_count,
+                )
 
-            return result
+                return result
 
-        except Exception as e:
-            self._push_job_repo.rollback()
-            self._push_job_repo.mark_as_failed(job_id, str(e))
-            self._push_job_repo.commit()
-            raise
+            except Exception as exc:
+                # UnitOfWork will rollback automatically on exception
+                # We need a new transaction to mark the job as failed
+                error = exc
+
+        # Mark as failed in a separate transaction
+        with self._uow:
+            self._uow.push_jobs.mark_as_failed(job_id, str(error))
+
+        raise error
+
+    def get_job_status(self, job_id: int) -> PushJobResponse:
+        """
+        Get the status of a push job.
+
+        Args:
+            job_id: The ID of the job.
+
+        Returns:
+            The job status response.
+
+        Raises:
+            JobNotFoundError: If the job is not found.
+        """
+        with self._uow:
+            job = self._uow.push_jobs.get_by_id(job_id)
+            if not job:
+                raise JobNotFoundError(job_id)
+            return job
 
     def _sync_contacts(self, job_id: int) -> SyncResult:
         """Sync all contacts for a job with HubSpot."""
-        job_contacts = self._contact_repo.get_by_job_id(job_id)
-        hubspot_contacts = self._hubspot.get_all_contacts()
+        job_contacts = self._uow.contacts.get_by_job_id(job_id)
+        hubspot_contacts = self._crm_client.get_all_contacts()
 
         match_result = self._matching_service.match_contacts(
             local_contacts=job_contacts,
@@ -118,20 +140,19 @@ class PushService:
 
     def _update_matched_contacts(
         self,
-        matched_contacts: list[tuple[ContactResponse, dict]],
+        matched_contacts: list[tuple[ContactResponse, HubSpotContact]],
     ) -> int:
         """Update contacts that matched with existing HubSpot contacts."""
         updated_count = 0
 
         for local_contact, hubspot_contact in matched_contacts:
             contact_data = self._merge_contact_data(local_contact, hubspot_contact)
-            hubspot_id = hubspot_contact["id"]
 
-            self._hubspot.update_contact(hubspot_id, contact_data)
+            self._crm_client.update_contact(hubspot_contact.id, contact_data)
 
-            self._contact_repo.update_with_hubspot_data(
+            self._uow.contacts.update_with_hubspot_data(
                 contact_id=local_contact.id,
-                hubspot_id=hubspot_id,
+                hubspot_id=hubspot_contact.id,
                 **contact_data,
             )
             updated_count += 1
@@ -155,11 +176,11 @@ class PushService:
                 "company": local_contact.company,
             }
 
-            hubspot_contact = self._hubspot.create_contact(contact_data)
+            hubspot_contact = self._crm_client.create_contact(contact_data)
 
-            self._contact_repo.update_with_hubspot_data(
+            self._uow.contacts.update_with_hubspot_data(
                 contact_id=local_contact.id,
-                hubspot_id=hubspot_contact["id"],
+                hubspot_id=hubspot_contact.id,
                 **contact_data,
             )
             created_count += 1
@@ -169,20 +190,16 @@ class PushService:
     def _merge_contact_data(
         self,
         local_contact: ContactResponse,
-        hubspot_contact: dict,
+        hubspot_contact: HubSpotContact,
     ) -> dict:
         """Merge local contact data with HubSpot contact data (local takes priority)."""
-        props = hubspot_contact["properties"]
+        props = hubspot_contact.properties
 
         return {
-            "first_name": local_contact.first_name or props.get("firstname"),
-            "last_name": local_contact.last_name or props.get("lastname"),
-            "email": local_contact.email or props.get("email"),
-            "linkedin_id": local_contact.linkedin_id or props.get("linkedin_id"),
-            "phone": local_contact.phone or props.get("phone"),
-            "company": local_contact.company or props.get("company"),
+            "first_name": local_contact.first_name or props.firstname,
+            "last_name": local_contact.last_name or props.lastname,
+            "email": local_contact.email or props.email,
+            "linkedin_id": local_contact.linkedin_id or props.linkedin_id,
+            "phone": local_contact.phone or props.phone,
+            "company": local_contact.company or props.company,
         }
-
-    def get_job_status(self, job_id: int) -> PushJobResponse | None:
-        """Get the status of a push job."""
-        return self._push_job_repo.get_by_id(job_id)

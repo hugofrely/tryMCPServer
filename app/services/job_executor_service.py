@@ -1,4 +1,4 @@
-from app.infrastructure import AsyncTaskExecutor, Session
+from app.infrastructure import AsyncTaskExecutor
 
 
 class JobExecutorService:
@@ -20,21 +20,19 @@ class JobExecutorService:
     def _process_push_job(self, job_id: str) -> None:
         """Execute push job processing in background."""
         # Import inside method to avoid circular imports
-        from app.dependencies.repositories import (
-            create_contact_repository,
-            create_push_job_repository,
+        from app.dependencies.services import (
+            get_crm_client,
+            get_matching_service,
+            get_unit_of_work,
         )
-        from app.dependencies.services import get_hubspot_client, get_matching_service
         from app.services.push_service import PushService
 
-        with Session() as session:
-            service = PushService(
-                push_job_repo=create_push_job_repository(session),
-                contact_repo=create_contact_repository(session),
-                hubspot_client=get_hubspot_client(),
-                matching_service=get_matching_service(),
-            )
-            service.process_job(int(job_id))
+        service = PushService(
+            uow=get_unit_of_work(),
+            crm_client=get_crm_client(),
+            matching_service=get_matching_service(),
+        )
+        service.process_job(int(job_id))
 
     def schedule_push_job(self, job_id: int) -> None:
         """

@@ -3,9 +3,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.repositories import ContactRepository, PushJobRepository
+from app.domain import HubSpotContact, HubSpotContactProperties, MatchResult
 from app.schemas import ContactResponse, PushJobResponse
-from app.services.contact_matching_service import ContactMatchingService, MatchResult
+from app.services.contact_matching_service import ContactMatchingService
 
 
 # =============================================================================
@@ -47,7 +47,7 @@ def make_contact():
 
 @pytest.fixture
 def make_hubspot_contact():
-    """Factory to create HubSpot contact dicts."""
+    """Factory to create HubSpotContact domain objects."""
 
     def _make(
         id: str = "hubspot_1",
@@ -55,16 +55,20 @@ def make_hubspot_contact():
         linkedin_id: str | None = None,
         firstname: str | None = None,
         lastname: str | None = None,
-    ) -> dict:
-        return {
-            "id": id,
-            "properties": {
-                "email": email,
-                "linkedin_id": linkedin_id,
-                "firstname": firstname,
-                "lastname": lastname,
-            },
-        }
+        phone: str | None = None,
+        company: str | None = None,
+    ) -> HubSpotContact:
+        return HubSpotContact(
+            id=id,
+            properties=HubSpotContactProperties(
+                email=email,
+                linkedin_id=linkedin_id,
+                firstname=firstname,
+                lastname=lastname,
+                phone=phone,
+                company=company,
+            ),
+        )
 
     return _make
 
@@ -99,35 +103,37 @@ def make_push_job():
 
 
 @pytest.fixture
-def mock_push_job_repo(make_push_job) -> Mock:
-    """Mock PushJobRepository."""
-    mock = Mock(spec=PushJobRepository)
-    mock.create_pending_job.return_value = make_push_job()
-    mock.get_by_id.return_value = make_push_job()
-    mock.mark_as_completed.return_value = None
-    mock.mark_as_failed.return_value = None
-    mock.commit.return_value = None
-    mock.rollback.return_value = None
+def mock_uow(make_push_job) -> Mock:
+    """Mock UnitOfWork with push_jobs and contacts repositories."""
+    mock = Mock()
+
+    # Mock push_jobs repository
+    mock.push_jobs = Mock()
+    mock.push_jobs.create_pending_job.return_value = make_push_job()
+    mock.push_jobs.get_by_id.return_value = make_push_job()
+    mock.push_jobs.mark_as_completed.return_value = None
+    mock.push_jobs.mark_as_failed.return_value = None
+
+    # Mock contacts repository
+    mock.contacts = Mock()
+    mock.contacts.bulk_create.return_value = []
+    mock.contacts.get_by_job_id.return_value = []
+    mock.contacts.update_with_hubspot_data.return_value = None
+
+    # Context manager support
+    mock.__enter__ = Mock(return_value=mock)
+    mock.__exit__ = Mock(return_value=None)
+
     return mock
 
 
 @pytest.fixture
-def mock_contact_repo() -> Mock:
-    """Mock ContactRepository."""
-    mock = Mock(spec=ContactRepository)
-    mock.bulk_create.return_value = []
-    mock.get_by_job_id.return_value = []
-    mock.update_with_hubspot_data.return_value = None
-    return mock
-
-
-@pytest.fixture
-def mock_hubspot_client() -> Mock:
-    """Mock HubSpotClient."""
+def mock_crm_client(make_hubspot_contact) -> Mock:
+    """Mock CRM client (HubSpot implementation)."""
     mock = Mock()
     mock.get_all_contacts.return_value = []
-    mock.create_contact.return_value = {"id": "hubspot_new"}
-    mock.update_contact.return_value = {"id": "hubspot_1"}
+    mock.create_contact.return_value = make_hubspot_contact(id="hubspot_new")
+    mock.update_contact.return_value = make_hubspot_contact(id="hubspot_1")
     return mock
 
 
